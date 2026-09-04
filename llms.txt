@@ -1,0 +1,40 @@
+# Redirect Loop Doctor: ERR_TOO_MANY_REDIRECTS
+
+> Free, client-side checker that finds why a site throws ERR_TOO_MANY_REDIRECTS (Chrome) or "The page isn't redirecting properly" (Firefox), and points at the exact layer causing it: Cloudflare SSL/TLS mode, nginx/Apache force-https rules, WordPress siteurl settings, a reverse proxy or load balancer not passing X-Forwarded-Proto, or a Cloudflare Page Rule that forwards a request back to itself.
+
+Describe your setup (whether Cloudflare sits in front, which SSL/TLS mode, what's between the browser and your app, whether WordPress is involved, whether you're on Vercel or Netlify, and what your redirect rules say), and it walks the layers in the order they're actually the cause most often and names the one that's looping, plus the fix, no account, no backend, nothing you type leaves your browser.
+
+## What it checks
+
+- Cloudflare SSL/TLS mode Flexible while the origin also force-redirects HTTP to HTTPS, the classic Cloudflare-origin loop.
+- Cloudflare "Always Use HTTPS" turned on while the encryption mode is Off, so the redirect it issues to https:// cannot actually be served on either hop.
+- A reverse proxy or load balancer that terminates TLS but isn't trusted for `X-Forwarded-Proto`, while the app force-redirects to HTTPS unconditionally, with fixes for WordPress (`wp-config.php`), Laravel (`TrustProxies`), Django (`SECURE_PROXY_SSL_HEADER`), Rails (`assume_ssl` / `force_ssl`), and nginx acting as the proxy itself (`$scheme` vs `X-Forwarded-Proto`).
+- WordPress Address (URL) vs Site Address (URL) mismatch, or a stale `WP_HOME` / `WP_SITEURL` from a migration.
+- www and apex redirecting to each other in opposite directions.
+- Trailing-slash normalization loops on platforms like Netlify.
+- A Cloudflare Page Rule or Redirect Rule whose source pattern has no scheme (matching both `http://` and `https://`) but whose destination is a hardcoded `https://` URL on the same host, so an already-https request matches the rule again and gets forwarded to itself forever, entirely inside Cloudflare.
+
+## Who it's for
+
+Site owners and developers staring at ERR_TOO_MANY_REDIRECTS: behind Cloudflare, on WordPress, behind nginx or Apache, on Vercel or Netlify, or behind a load balancer that isn't forwarding the original scheme correctly.
+
+## How it works
+
+Static HTML plus a dependency-free JavaScript engine. All checks run in your browser against what you describe; the tool has no backend and makes no request that carries your configuration anywhere.
+
+## Privacy
+
+No account, no login, no cookies for the tool itself, no server-side processing of your config. The only analytics are anonymous usage counts (event name + count, never the content of what you entered) sent to a self-hosted Umami instance.
+
+## Links
+
+- Tool: https://arling.sk/redirect-loop-doctor/
+- Full reference (rule details, FAQ): https://arling.sk/redirect-loop-doctor/llms-full.txt
+- Source code: https://github.com/AndryRoby/redirect-loop-doctor
+- Sibling tool for Google OAuth redirect_uri_mismatch: https://arling.sk/google-oauth-redirect-doctor/
+- Sibling tool for Supabase Auth on the web: https://arling.sk/supabase-redirect-doctor/
+- Hub (more ARLing tools): https://arling.sk/
+
+## Contact
+
+Built by ARLing s. r. o. (Bratislava, Slovakia). andrej@arling.sk

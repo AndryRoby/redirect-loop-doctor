@@ -1,0 +1,71 @@
+# Redirect Loop Doctor: ERR_TOO_MANY_REDIRECTS
+
+> Free, client-side checker that finds why a site throws ERR_TOO_MANY_REDIRECTS (Chrome) or "The page isn't redirecting properly" (Firefox), and points at the exact layer causing it: Cloudflare SSL/TLS mode, nginx/Apache force-https rules, WordPress siteurl settings, a reverse proxy or load balancer not passing X-Forwarded-Proto, or a Cloudflare Page Rule that forwards a request back to itself.
+
+Describe your setup, whether Cloudflare sits in front and which SSL/TLS mode, what's between the browser and your app, whether WordPress is involved, whether you're on Vercel or Netlify, and what your redirect rules say, and it walks the layers in the order they're actually the cause most often, and names the one that's looping plus the fix. No account, no backend, nothing you type leaves your browser.
+
+## What it checks
+
+- **Cloudflare SSL/TLS mode Flexible, origin also force-redirects HTTP to HTTPS.** Flexible means Cloudflare talks to the origin over plain HTTP no matter what the visitor used. Cloudflare's own troubleshooting page names this as a primary cause: "if your origin automatically redirects HTTP to HTTPS, a loop forms." Fix: switch encryption mode to Full (strict) with a valid certificate on the origin (Let's Encrypt or Cloudflare Origin CA); removing the origin's HTTPS redirect instead works but leaves the Cloudflare-to-origin hop unencrypted.
+- **Cloudflare "Always Use HTTPS" on while the encryption mode is Off.** The edge redirects every visitor to `https://`, but Off means no hop, visitor-to-Cloudflare or Cloudflare-to-origin, is actually encrypted, so the `https://` URL the edge just redirected to cannot be served. Fix: raise the encryption mode to at least Flexible (Full or Full (strict) once the origin has a certificate).
+- **Reverse proxy or load balancer terminates TLS but the app doesn't trust `X-Forwarded-Proto`, while the app force-redirects to HTTPS unconditionally.** The proxy answers the visitor over HTTPS, then forwards to the app over plain HTTP internally, which is completely normal. If the app decides "this connection is HTTP, redirect to HTTPS" without reading the forwarded-proto header the proxy set, it redirects on literally every request it receives, because to the app every request really did arrive as HTTP. Framework by framework:
+  - **WordPress**: add to `wp-config.php`, before `require_once ABSPATH . 'wp-settings.php';`:
+    ```php
+    if (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') {
+        $_SERVER['HTTPS'] = 'on';
+    }
+    ```
+    This is the same pattern documented in WordPress core Trac ticket #15733 ("WordPress Installation behind reverse-proxy ssl redirect loop").
+  - **Laravel**: enable `Illuminate\Http\Middleware\TrustProxies` in `bootstrap/app.php` via `$middleware->trustProxies(at: [...])` (or `at: '*'` behind a cloud load balancer with unknown IPs), and make sure `Request::HEADER_X_FORWARDED_PROTO` is included in the trusted `headers` bitmask. Laravel's own docs frame this exactly as the redirect-loop-adjacent symptom: "your application sometimes does not generate HTTPS links... because your application is being forwarded traffic from your load balancer on port 80 and does not know it should generate secure links."
+  - **Django**: set `SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')` in `settings.py`, and only once the proxy is trusted to control that header itself end-to-end (never trust it if a client could set it directly, since `is_secure()` is a security-relevant decision).
+  - **Rails**: `config.assume_ssl = true` (Rails' own guide: "this middleware makes the server assume that the proxy already terminated SSL, and that the request really is HTTPS") combined with `config.force_ssl = true`, and confirm `config.action_dispatch.trusted_proxies` includes the load balancer so `ActionDispatch::RemoteIp` and the forwarded headers are read correctly.
+  - **nginx as the reverse proxy itself**: forward the real scheme downstream with `proxy_set_header X-Forwarded-Proto $scheme;` in the proxied `location` block, and never write `return 301 $scheme://...;` on the plain-HTTP (port 80) `server` block, since nginx's own `$scheme` variable is `http` there by definition; that pattern 301s `http://` back to `http://` forever. Hardcode `return 301 https://$host$request_uri;` instead.
+- **WordPress Address (URL) vs Site Address (URL) mismatch.** WordPress's Settings General screen documents these as two independently-settable values (identical unless WordPress lives in its own subdirectory); if one is `http` and the other `https`, or either still points at an old domain via a stale `WP_HOME` / `WP_SITEURL` constant left in `wp-config.php` from a migration, WordPress redirects between the two, and neither matches what the visitor actually requested. `WP_SITEURL` / `WP_HOME` constants take precedence over the database value and cannot be changed from wp-admin once set, which is a common reason a fix in the dashboard doesn't stick.
+- **www and apex redirecting to each other.** A DNS/host-panel rule sends `www` to the apex domain while the app or a platform-level rule sends the apex back to `www` (or a CDN rule and a platform rule disagree about which one is canonical). Each hop flips the host back to the other, forever. Cloudflare's own guidance for this class of bug: check that redirect rules and Page Rules are "not in conflict with each other."
+- **Trailing-slash normalization loop.** Netlify's own docs state plainly: "you cannot use a redirect rule to add or remove a trailing slash," because Netlify normalizes trailing slashes before applying redirect rules, and ships Pretty URLs (forwarding `/about` to `/about/`, rewriting `/about.html` to `/about/`) by default. A rule whose source and destination are equivalent once that normalization runs, Netlify's own worked example is `/blog/remove-my-slashes/` redirecting to `/blog/remove-my-slashes`, loops forever, since after normalization the two paths are the same route.
+- **Cloudflare Page Rule / Redirect Rule that forwards to itself.** A Forwarding URL rule (or Redirect Rule) whose source pattern has no scheme, so it matches both `http://` and `https://` requests, but whose destination is a hardcoded `https://` URL on the same host: an already-`https://` request matches the rule again and gets "forwarded" to the exact same URL, an infinite loop entirely inside Cloudflare's edge, before the request ever reaches the origin. Cloudflare's own troubleshooting guide names this class of bug directly, warning that redirect rules can be "in conflict with each other"; scoping the rule's source to `http://` only, or replacing it with the "Always Use HTTPS" toggle, fixes it. (Vercel and Netlify's own redirect engines are evaluated centrally by the platform rather than chained per request, so a single rule looping on its own source is not the same failure mode there: Netlify's own docs state that "infinitely looping rules, where the 'from' and 'to' resolve to the same location, are incorrect and will be ignored" by its engine, not served.)
+
+## Who it's for
+
+Site owners and developers staring at `ERR_TOO_MANY_REDIRECTS`: behind Cloudflare (any SSL/TLS mode), on WordPress (self-hosted, on a host with SSL offloading, behind a CDN), behind nginx or Apache as a reverse proxy, behind a cloud load balancer (AWS ELB/ALB, GCP, Azure), or on Vercel/Netlify with a redirect rule that isn't behaving.
+
+## How it works
+
+Static HTML plus a dependency-free JavaScript engine. Every check runs in your browser against what you describe; there is no backend and no request that carries your configuration anywhere, read the source directly to verify.
+
+## FAQ
+
+**Why do I get ERR_TOO_MANY_REDIRECTS only sometimes, not on every visit?**
+Intermittent loops usually mean two backend nodes behind the same load balancer or CDN disagree, one terminates TLS and forwards `X-Forwarded-Proto: https` correctly, another doesn't (a newly added server, a health check hitting a different pool). It can also mean a CDN edge cache is serving a stale redirect response from before a fix was deployed; a hard refresh or a cache purge at the CDN rules that out.
+
+**Why does curl show the loop but my colleague's browser doesn't see it?**
+Browsers cache HSTS state and, separately, cache 301 redirects aggressively (sometimes permanently, until you clear the browser's own cache, not just cookies). `curl -v -L` against the URL bypasses both and shows the actual `Location:` header your server is sending right now, which is the most reliable way to see what's really looping versus what a browser is still replaying from a stale cache.
+
+**I'm behind Cloudflare and set the SSL/TLS mode to Full, but it's still looping. Why?**
+Full mode still requires the origin to actually present a certificate; if it doesn't (no cert installed, expired cert, cert for the wrong hostname), Cloudflare's connection to the origin fails outright rather than looping in most cases, but some origin configurations fall back to serving plain HTTP on port 443 when the TLS handshake fails, which reintroduces the same Flexible-mode failure mode even though the dashboard says Full. Full (strict) with a real, valid, matching certificate is the version of this fix that actually closes the loop for good.
+
+**My app is behind an nginx reverse proxy that I don't control (managed hosting, a PaaS). Can I still fix this?**
+Usually yes, from the app side alone: as long as the proxy forwards *some* `X-Forwarded-Proto` header (nearly all managed platforms do, since it's the de facto standard for this), configuring the app to trust it (Laravel `TrustProxies`, Django `SECURE_PROXY_SSL_HEADER`, Rails `assume_ssl`, WordPress's `wp-config.php` check) is enough, without needing to touch the proxy configuration itself.
+
+**Does "Always Use HTTPS" and an origin-side force-https redirect both being on always cause a loop?**
+Not necessarily, if both agree on the outcome (HTTP in, HTTPS out, and neither one then redirects HTTPS back to HTTP), the request just gets one extra redirect hop, wasteful but not infinite. The loop only starts once one of the two layers redirects a request back to the scheme the other layer just redirected away from.
+
+**What's the difference between this and just checking "is my site using HTTPS"?**
+A redirect loop is specifically two (or more) layers each independently deciding the current request is in the wrong scheme and each redirecting it to the other scheme, forever. A site that's simply not using HTTPS, or one that redirects HTTP to HTTPS exactly once and stops, doesn't have this problem at all; the failure mode this tool targets is strictly about disagreement between layers, not about whether HTTPS is configured at all.
+
+## Privacy
+
+No account, no login, no cookies for the tool itself, no server-side processing of your config. The only analytics are anonymous usage counts (event name + count, never the content of what you entered) sent to a self-hosted Umami instance.
+
+## Links
+
+- Tool: https://arling.sk/redirect-loop-doctor/
+- Short reference: https://arling.sk/redirect-loop-doctor/llms.txt
+- Source code: https://github.com/AndryRoby/redirect-loop-doctor
+- Sibling tool for Google OAuth redirect_uri_mismatch: https://arling.sk/google-oauth-redirect-doctor/
+- Sibling tool for Supabase Auth on the web: https://arling.sk/supabase-redirect-doctor/
+- Hub (more ARLing tools): https://arling.sk/
+
+## Contact
+
+Built by ARLing s. r. o. (Bratislava, Slovakia). andrej@arling.sk

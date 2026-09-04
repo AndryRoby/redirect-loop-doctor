@@ -1,0 +1,12 @@
+{
+  "name": "redirect-loop-doctor",
+  "version": "1.0.0",
+  "description": "Redirect Loop Doctor: free, client-side diagnostic for ERR_TOO_MANY_REDIRECTS across Cloudflare SSL modes, nginx/Apache force-https rules, WordPress siteurl settings, Vercel/Netlify redirects, and load balancers behind X-Forwarded-Proto.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests.mjs"
+  },
+  "license": "UNLICENSED",
+  "author": "ARLing s. r. o. <andrej@arling.sk>"
+}
