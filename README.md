@@ -73,7 +73,7 @@ The rules this tool checks are drawn from:
 
 ## Report a problem
 
-Found an `ERR_TOO_MANY_REDIRECTS` cause this tool doesn't catch, or a check that flags something that's actually fine? Open an issue: https://github.com/AndryRoby/redirect-loop-doctor/issues, or write to andrej@arling.sk. Please redact anything sensitive (real domains, internal IPs) before posting; issues are public.
+Found an `ERR_TOO_MANY_REDIRECTS` cause this tool doesn't catch, or a check that flags something that's actually fine? Open an issue: https://github.com/AndryRoby/redirect-loop-doctor/issues, or write to support@arling.sk. Please redact anything sensitive (real domains, internal IPs) before posting; issues are public.
 
 ## License
 
@@ -81,7 +81,7 @@ All rights reserved, see [LICENSE-NOTICE.md](LICENSE-NOTICE.md). Reading the sou
 
 ---
 
-ARLing s. r. o., Bratislava, Slovakia. andrej@arling.sk
+ARLing s. r. o., Bratislava, Slovakia. support@arling.sk
 
 Hub (more free tools): https://arling.sk/
 
